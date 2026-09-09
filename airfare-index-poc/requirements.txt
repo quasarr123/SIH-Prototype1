@@ -1,0 +1,9 @@
+pandas>=2.0
+streamlit>=1.30
+plotly>=5.18
+
+# Included for the architecture described in collectors.py — not
+# exercised by the POC itself, which uses mock data (see README).
+playwright>=1.40
+beautifulsoup4>=4.12
+requests>=2.31
