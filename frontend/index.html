@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>APIx India | Real-Time Airfare Price Index</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Google Fonts & Chart.js -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-badge">✈️ APIx</div>
+        <div>
+          <h1>Real-Time Airfare Price Index (APIx)</h1>
+          <p class="subtitle">Automated Airfare Scraping & DGCA-Weighted CPI Augmentation Platform</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <span class="status-dot"></span>
+        <span id="db-status-text">Database: Connected</span>
+      </div>
+    </header>
+
+    <!-- On-Demand Scraper Controls -->
+    <section class="control-panel card">
+      <div class="panel-header">
+        <h2>⚡ On-Demand Scraper Console</h2>
+        <span class="badge">Targeted Scraping</span>
+      </div>
+      <p class="panel-desc">Select a representative DGCA route and advance booking window to scrape live fares on-demand:</p>
+      <div class="controls-row">
+        <div class="form-group">
+          <label for="route-select">Representative City-Pair:</label>
+          <select id="route-select">
+            <option value="DEL-BOM">DEL ➔ BOM (Delhi to Mumbai - W: 18.5%)</option>
+            <option value="DEL-BLR">DEL ➔ BLR (Delhi to Bengaluru - W: 14.2%)</option>
+            <option value="BOM-BLR">BOM ➔ BLR (Mumbai to Bengaluru - W: 11.0%)</option>
+            <option value="DEL-CCU">DEL ➔ CCU (Delhi to Kolkata - W: 9.5%)</option>
+            <option value="BLR-HYD">BLR ➔ HYD (Bengaluru to Hyderabad - W: 8.8%)</option>
+            <option value="MAA-DEL">MAA ➔ DEL (Chennai to Delhi - W: 8.2%)</option>
+            <option value="BOM-GOI">BOM ➔ GOI (Mumbai to Goa - W: 7.8%)</option>
+            <option value="DEL-HYD">DEL ➔ HYD (Delhi to Hyderabad - W: 7.5%)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="window-select">Advance Purchase Window:</label>
+          <select id="window-select">
+            <option value="1">T+1 Day (Last-minute emergency)</option>
+            <option value="7" selected>T+7 Days (1 Week advance)</option>
+            <option value="15">T+15 Days (2 Weeks advance)</option>
+            <option value="30">T+30 Days (1 Month advance)</option>
+            <option value="45">T+45 Days (Early bird booking)</option>
+          </select>
+        </div>
+
+        <div class="form-group btn-group">
+          <button id="btn-scrape" class="btn btn-primary" onclick="triggerScrape()">
+            <span id="scrape-icon">🔍</span>
+            <span id="scrape-text">Scrape Fares As Needed</span>
+          </button>
+        </div>
+      </div>
+      <div id="scrape-feedback" class="feedback-msg hidden"></div>
+    </section>
+
+    <!-- KPI Metric Cards -->
+    <section class="kpi-grid">
+      <div class="card kpi-card">
+        <div class="kpi-label">Headline APIx (Laspeyres)</div>
+        <div class="kpi-value highlight" id="kpi-headline">105.40</div>
+        <div class="kpi-subtext">Base Period P0 = 100.00</div>
+      </div>
+
+      <div class="card kpi-card">
+        <div class="kpi-label">T+1 Last Minute Surge</div>
+        <div class="kpi-value text-red" id="kpi-t1">164.20</div>
+        <div class="kpi-subtext">+64.2% Premium vs Base</div>
+      </div>
+
+      <div class="card kpi-card">
+        <div class="kpi-label">T+30 Advance Index</div>
+        <div class="kpi-value text-green" id="kpi-t30">99.10</div>
+        <div class="kpi-subtext">Baseline Leisure Fares</div>
+      </div>
+
+      <div class="card kpi-card">
+        <div class="kpi-label">Quotes in Database</div>
+        <div class="kpi-value" id="kpi-sample">--</div>
+        <div class="kpi-subtext">Active market samples</div>
+      </div>
+    </section>
+
+    <!-- Interactive Charts Section -->
+    <section class="charts-grid">
+      <div class="card chart-card">
+        <div class="chart-header">
+          <h3>Daily APIx Index Trend</h3>
+          <span class="chart-sub">Laspeyres weighted airfare index</span>
+        </div>
+        <div class="chart-wrapper">
+          <canvas id="trendChart"></canvas>
+        </div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="chart-header">
+          <h3>Lead-Time Price Elasticity</h3>
+          <span class="chart-sub">Price multiplier vs days to departure</span>
+        </div>
+        <div class="chart-wrapper">
+          <canvas id="elasticityChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- CPI Augmentation Callout for Judges -->
+    <section class="card cpi-explainer">
+      <h3>🏛️ Economic Relevance: CPI Augmentation for NSO & RBI</h3>
+      <p>
+        Currently, MoSPI's official Consumer Price Index (Transport & Communication sub-group) publishes with a 
+        <strong>45-day lag</strong>. By continuously indexing scraped airfares weighted by DGCA route density, 
+        APIx provides the Reserve Bank of India (RBI) and the National Statistical Office (NSO) with 
+        <strong>real-time inflation nowcasting</strong> and dynamic yield pricing surveillance.
+      </p>
+    </section>
+
+    <!-- Cleaned & Normalized Airfare Quotes Table -->
+    <section class="card table-card">
+      <div class="table-header">
+        <h3>Cleaned & De-duplicated Airfare Quotes</h3>
+        <button class="btn btn-secondary" onclick="loadQuotes()">🔄 Refresh Table</button>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Carrier</th>
+              <th>Flight</th>
+              <th>Route</th>
+              <th>Departure Date</th>
+              <th>Window</th>
+              <th>Base Fare</th>
+              <th>UDF Fee</th>
+              <th>Taxes & GST</th>
+              <th>Total Fare</th>
+              <th>Scraped At</th>
+            </tr>
+          </thead>
+          <tbody id="quotes-tbody">
+            <tr>
+              <td colspan="10" class="text-center">Loading scraped airfare records...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p>Smart India Hackathon Prototype | Real-Time Airfare Price Index (APIx) | MariaDB & Python</p>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
