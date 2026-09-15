@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Generated data / runtime artifacts
+data/airfare.db
+data/sample_fares.csv
+*.log
+
+# Streamlit / misc
+.DS_Store
+.streamlit/
+
+# IDEs / editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
