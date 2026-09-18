@@ -28,10 +28,18 @@ import plotly.express as px
 import streamlit as st
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+import main as pipeline  # noqa: E402  (reuses orchestration; argparse only runs under __main__)
 from database import db  # noqa: E402
-from processing.cleaning import clean_fares  # noqa: E402
+from processing.cleaning import clean_fares, flagged_summary, coverage_report  # noqa: E402
 from processing import index_calculator as idx  # noqa: E402
-from config import BASELINE_WINDOW_DAYS, CURRENT_WINDOW_DAYS  # noqa: E402
+from config import (  # noqa: E402
+    BASELINE_WINDOW_DAYS,
+    CURRENT_WINDOW_DAYS,
+    ROUTE_WEIGHTS,
+    CAPTURE_SPEC,
+    INDEX_BASE_VALUE,
+    SCOPE,
+)
 
 
 st.set_page_config(
@@ -47,6 +55,10 @@ st.set_page_config(
 @st.cache_data(ttl=60)
 def load_clean_data() -> pd.DataFrame:
     db.init_db()
+    if db.row_count() == 0:
+        # One-command behaviour: if the DB is empty, seed it with mock
+        # data so the app always opens with something to show.
+        pipeline.collect_and_store(force_refresh=False, live=False, tolerant=True)
     raw = db.fetch_all_fares()
     return clean_fares(raw)
 
@@ -55,9 +67,28 @@ full_df = load_clean_data()
 
 st.title("✈️ India Domestic Airfare Price Index")
 st.caption(
-    "Proof of Concept — tracks fares across 7 popular domestic routes from "
-    "2 data sources, and calculates an Airfare Index relative to a baseline period."
+    "CPI-compatible proof of concept (SIH 2026 / PS 26056) — a "
+    "route-weighted, modified-Laspeyres index over a fixed basket of 7 "
+    "domestic routes, built on like-for-like, quality-validated fares."
 )
+
+
+# ---------------------------------------------------------------
+# Sidebar: collect-fresh control + filters
+# ---------------------------------------------------------------
+st.sidebar.header("Data")
+collect_clicked = st.sidebar.button(
+    "🔄 Scrape & update data now",
+    help="Scrapes Ixigo for the latest fares, updates the database, then "
+         "reloads the dashboard. Falls back to mock data if the scrape is empty.",
+)
+if collect_clicked:
+    with st.spinner("Scraping Ixigo (one Chrome window per route)…"):
+        pipeline.collect_and_store(
+            force_refresh=True, live=True, tolerant=True
+        )
+    st.cache_data.clear()
+    st.rerun()
 
 if full_df.empty:
     st.warning(
@@ -92,9 +123,18 @@ travel_date_range = st.sidebar.date_input(
 
 st.sidebar.markdown("---")
 st.sidebar.caption(
-    f"Baseline window: earliest {BASELINE_WINDOW_DAYS} search days\n\n"
-    f"Current window: latest {CURRENT_WINDOW_DAYS} search days"
+    f"Base period: earliest {BASELINE_WINDOW_DAYS} search days (index = "
+    f"{INDEX_BASE_VALUE:g})\n\n"
+    f"Current window: latest {CURRENT_WINDOW_DAYS} search days\n\n"
+    f"Capture spec: {CAPTURE_SPEC['booking_class']}, {CAPTURE_SPEC['fare_type']}, "
+    f"lead {CAPTURE_SPEC['lead_time_days']}d (±{CAPTURE_SPEC['lead_tolerance_days']}d)\n\n"
+    f"Aggregation: route-weighted Laspeyres"
 )
+
+flagged_count = int((full_df["validation_status"] == "flagged").sum())
+if flagged_count > 0:
+    st.sidebar.warning(f"{flagged_count} quotes flagged by the quality layer "
+                       f"(excluded from the index)")
 
 # Apply filters
 filtered_df = full_df[
@@ -133,28 +173,34 @@ delta_val = overall["pct_change"]
 m1.metric(
     "Overall Airfare Index",
     f"{index_val:.2f}" if index_val is not None else "N/A",
-    delta=f"{delta_val:+.2f} pts vs 100" if delta_val is not None else None,
+    delta=f"{delta_val:+.2f} pts vs base" if delta_val is not None else None,
 )
 m2.metric(
-    "Current Avg Fare",
+    "Current Weighted Avg Fare",
     f"Rs. {overall['current_avg_fare']:,.0f}" if overall["current_avg_fare"] else "N/A",
 )
 m3.metric(
-    "Baseline Avg Fare",
+    "Base-period Avg Fare",
     f"Rs. {overall['baseline_avg_fare']:,.0f}" if overall["baseline_avg_fare"] else "N/A",
 )
 m4.metric(
-    "% Change from Baseline",
-    f"{delta_val:+.2f}%" if delta_val is not None else "N/A",
+    "Points vs Base",
+    f"{delta_val:+.2f}" if delta_val is not None else "N/A",
 )
 
 if index_val is not None:
     if index_val > 100:
-        st.info(f"📈 Fares are **{delta_val:+.2f}%** above the baseline — prices have risen.")
+        st.info(
+            f"📈 Fares are **{delta_val:+.2f} index points** above the base period "
+            f"({INDEX_BASE_VALUE:g}) — aggregate fares have risen."
+        )
     elif index_val < 100:
-        st.success(f"📉 Fares are **{delta_val:+.2f}%** below the baseline — prices have fallen.")
+        st.success(
+            f"📉 Fares are **{delta_val:+.2f} index points** below the base period "
+            f"({INDEX_BASE_VALUE:g}) — aggregate fares have fallen."
+        )
     else:
-        st.info("Fares are exactly at the baseline level.")
+        st.info(f"Fares are exactly at the base-period level ({INDEX_BASE_VALUE:g}).")
 
 st.markdown("---")
 
@@ -178,14 +224,18 @@ st.markdown("---")
 
 
 # ---------------------------------------------------------------
-# 4. Route-wise comparison
+# 4. Route-wise comparison (weighted basket)
 # ---------------------------------------------------------------
-st.subheader("Route-wise Fare Comparison")
+st.subheader("Route-wise Price Comparison (weighted basket)")
 rc1, rc2 = st.columns([2, 3])
+
+route_display = route_df.copy()
+route_display["Weight"] = route_display["weight_pct"].astype(str) + "%"
+route_display["Contribution (pts)"] = route_display["index_pts"]
 
 with rc1:
     st.dataframe(
-        route_df.rename(
+        route_display.rename(
             columns={
                 "route": "Route",
                 "baseline_avg_fare": "Baseline Avg (Rs.)",
@@ -193,7 +243,10 @@ with rc1:
                 "airfare_index": "Index",
                 "pct_change": "% Change",
             }
-        ),
+        )[
+            ["Route", "Weight", "Baseline Avg (Rs.)", "Current Avg (Rs.)",
+             "Index", "Contribution (pts)"]
+        ],
         use_container_width=True,
         hide_index=True,
     )
@@ -205,9 +258,97 @@ with rc2:
         y=["baseline_avg_fare", "current_avg_fare"],
         barmode="group",
         labels={"route": "Route", "value": "Avg Fare (Rs.)", "variable": "Period"},
-        title="Baseline vs Current Average Fare by Route",
+        title="Baseline vs Current Like-for-like Fare by Route",
     )
     st.plotly_chart(fig_route, use_container_width=True)
+
+if "index_pts" in route_df.columns and not route_df.empty:
+    st.caption(
+        "Point contribution = route weight × price relative × 100. "
+        "Each route's bars show how many points of the aggregate index it "
+        "contributes (the stacked total equals the headline index)."
+    )
+    fig_contrib = px.bar(
+        route_df,
+        x="route",
+        y="index_pts",
+        color="route",
+        labels={"route": "Route", "index_pts": "Index points contributed"},
+        title="Route-weighted contribution to the aggregate index",
+    )
+    st.plotly_chart(fig_contrib, use_container_width=True)
+
+
+# ---------------------------------------------------------------
+# Methodology & quality (CPI-compatibility explainer)
+# ---------------------------------------------------------------
+with st.expander("See the CPI methodology behind this index"):
+    st.markdown(
+        f"""
+This prototype implements the statistical rules MoSPI uses for CPI so the
+result can slot into the *Transport & Communication* sub-group.
+
+**1. Base period** — the index is pinned to the earliest
+{BASELINE_WINDOW_DAYS} search days in the dataset ("base = {INDEX_BASE_VALUE:g}").
+MoSPI's CPI uses 2012 = 100; because no granular air-fare capture predates this
+system, a fresh, documented base period is defensible for a new sub-item.
+
+**2. Scope** — {SCOPE['included']}. Excluded: {', '.join(SCOPE['excluded'])}.
+
+**3. Route basket & weights** — 7 routes are the *pilot subset* of a nationally
+representative basket chosen at scale from DGCA / AAI passenger-volume data.
+Each route's weight is its passenger-volume share (summing to 1):
+
+| Route | Weight |
+|---|---|
+""" +
+        "".join(
+            f"| {o}-{d} | {w*100:g}% |\n" for (o, d), w in ROUTE_WEIGHTS.items()
+        )
+        +
+        f"""
+**4. Like-for-like capture** — every quote prices the same item:
+{CAPTURE_SPEC['booking_class'].title()}-class, {CAPTURE_SPEC['fare_type']}, booked
+exactly {CAPTURE_SPEC['lead_time_days']} days before departure (fallback: nearest
+lead within ±{CAPTURE_SPEC['lead_tolerance_days']} days). That is the air-fare
+equivalent of CPI fixing one size/brand of a grocery item.
+
+**5. Aggregation (modified Laspeyres)**
+
+    I = Σ_r  w_r · (P_rt / P_r0) × 100
+
+where w_r = route passenger share, P_rt = current like-for-like fare, P_r0 =
+base-period like-for-like fare. This replaces the POC's former
+`current avg / baseline avg × 100` with a CPI-grade weighted relative.
+
+**6. Data quality & audit** — outliers and stale/cached quotes are detected and
+flagged (never silently dropped), missing scrapes re-normalise weights over
+available routes, and every stored fare is traceable to source + timestamp +
+validation verdict (see `fares.validation_status`).
+        """
+    )
+
+flagged_df = flagged_summary(full_df)
+if not flagged_df.empty:
+    st.warning(
+        f"**{flagged_count} quotes flagged & excluded from the index** — "
+        "these remain in the DB audit trail for transparency."
+    )
+    st.dataframe(flagged_df, hide_index=True, use_container_width=True)
+    with st.expander("Per search-day route coverage (missing-scrape audit)"):
+        cov = coverage_report(full_df)
+        # only show rows with gaps or the latest days
+        gap = cov[cov["coverage_pct"] < 100]
+        if not gap.empty:
+            st.dataframe(
+                gap.sort_values("coverage_pct"),
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.caption("All expected search-day × route quotes were captured.")
+
+st.markdown("---")
 
 
 # ---------------------------------------------------------------
@@ -241,9 +382,9 @@ with tc2:
         y="airfare_index",
         markers=True,
         labels={"search_date": "Search Date", "airfare_index": "Airfare Index"},
-        title="Airfare Index Over Time (baseline = 100)",
+        title=f"Weighted Laspeyres Airfare Index Over Time (base = {INDEX_BASE_VALUE:g})",
     )
-    fig_index_trend.add_hline(y=100, line_dash="dash", line_color="gray")
+    fig_index_trend.add_hline(y=INDEX_BASE_VALUE, line_dash="dash", line_color="gray")
     st.plotly_chart(fig_index_trend, use_container_width=True)
 
 

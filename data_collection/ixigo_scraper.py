@@ -36,6 +36,7 @@ obtain permission or use an official API / licensed data feed.
 import re
 import os
 import time
+import uuid
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -51,6 +52,11 @@ from selenium.common.exceptions import (
 )
 
 from data_collection.collectors import BaseFareCollector
+
+import sys
+from pathlib import Path  # noqa: E402
+sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
+from config import CAPTURE_SPEC  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Ixigo-specific configuration
@@ -171,6 +177,7 @@ class IxigoCollector(BaseFareCollector):
             destination=destination,
             ddmmyyyy=_to_ddmmyyyy(travel_date),
         )
+        scrape_id = str(uuid.uuid4())
 
         try:
             driver.get(url)
@@ -205,7 +212,10 @@ class IxigoCollector(BaseFareCollector):
 
         for _ in range(SCROLL_ROUNDS + 1):
             for card in self._current_cards(driver):
-                parsed = self._parse_card(card, origin, destination, travel_date)
+                parsed = self._parse_card(
+                    card, origin, destination, travel_date,
+                    scrape_id=scrape_id, source_url=url,
+                )
                 if not parsed or parsed["fare_price"] is None:
                     continue
                 key = (
@@ -239,7 +249,8 @@ class IxigoCollector(BaseFareCollector):
     # ------------------------------------------------------------------
     # Parsing
     # ------------------------------------------------------------------
-    def _parse_card(self, card, origin, destination, travel_date):
+    def _parse_card(self, card, origin, destination, travel_date,
+                    scrape_id: str = "", source_url: str = ""):
         try:
             text = card.text  # entire card text
         except WebDriverException:
@@ -285,6 +296,13 @@ class IxigoCollector(BaseFareCollector):
         if m:
             duration = m.group(1)
 
+        try:
+            lead_time_days = (
+                datetime.strptime(travel_date, "%Y-%m-%d").date() - datetime.now().date()
+            ).days
+        except ValueError:
+            lead_time_days = None
+
         return {
             "source": self.source_name,
             "airline": airline,
@@ -293,6 +311,12 @@ class IxigoCollector(BaseFareCollector):
             "travel_date": travel_date,
             "search_datetime": datetime.now().isoformat(timespec="seconds"),
             "fare_price": price_num,
+            "lead_time_days": lead_time_days,
+            "booking_class": CAPTURE_SPEC["booking_class"],
+            "fare_type": CAPTURE_SPEC["fare_type"],
+            "scrape_id": scrape_id,
+            "raw_fare_value": text,
+            "source_url": source_url,
             "departure_time": dep,
             "arrival_time": arr,
             "departure_code": dep_code,

@@ -55,6 +55,14 @@ class BaseFareCollector(ABC):
                 "travel_date": travel_date,           # 'YYYY-MM-DD'
                 "search_datetime": iso_timestamp_str,
                 "fare_price": float,
+                # Phase 3 — like-for-like capture specification
+                "lead_time_days": int,                # (travel_date - search_date).days
+                "booking_class": "economy",
+                "fare_type": "non_refundable",
+                # Phase 4 — audit trail
+                "scrape_id": str,                     # this collection run's id
+                "raw_fare_value": str,                # raw scraped text before parsing
+                "source_url": str,                    # URL the fare was observed at
             }
         """
         raise NotImplementedError
@@ -90,6 +98,14 @@ class PlaywrightSiteACollector(BaseFareCollector):
                         "travel_date": travel_date,
                         "search_datetime": datetime.now().isoformat(),
                         "fare_price": _parse_price(price),
+                        # Phase 3/4: fill from CAPTURE_SPEC + page context
+                        "lead_time_days": (parse_date(travel_date)
+                                           - datetime.now().date()).days,
+                        "booking_class": CAPTURE_SPEC["booking_class"],
+                        "fare_type": CAPTURE_SPEC["fare_type"],
+                        "scrape_id": str(uuid.uuid4()),
+                        "raw_fare_value": price,
+                        "source_url": page.url,
                     })
                 browser.close()
                 return results
@@ -119,7 +135,7 @@ class BeautifulSoupSiteBCollector(BaseFareCollector):
             resp = requests.get(SEARCH_URL, params={...})
             soup = BeautifulSoup(resp.text, "html.parser")
             rows = soup.select(".result-row")
-            ... same shape as above ...
+            ... same shape as above (incl. Phase-3/4 audit fields) ...
     """
 
     source_name = "TripEase"
