@@ -75,7 +75,9 @@ USE_MOCK=1 ./run_app.sh
 
 This runs the fare collector, refreshes the database, then launches the
 dashboard at http://localhost:8501. If the live scrape finds nothing it keeps
-existing data and still opens the app (`--tolerant`).
+existing data and still opens the app (`--tolerant`); if the database was
+wiped and the scrape comes back empty, it auto-seeds representative mock
+fares so the demo always runs.
 
 ### Option A — one-click pipeline script
 

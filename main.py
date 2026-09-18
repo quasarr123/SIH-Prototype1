@@ -136,6 +136,20 @@ def collect_live_ixigo(
         print("The Ixigo CSS selectors live in data_collection/ixigo_scraper.py.")
         if not tolerant:
             sys.exit(1)
+        print("Tolerant mode: seeding mock fare data so the dashboard still runs "
+              "on representative fares.")
+        fallback_records = generate_mock_fares()
+        inserted = db.insert_fares(fallback_records)
+        if fallback_records:
+            db.log_scrape_run(
+                scrape_id=fallback_records[0]["scrape_id"],
+                source="|".join(sorted({r["source"] for r in fallback_records})),
+                status="completed",
+                records_expected=len(fallback_records),
+                records_found=len(fallback_records),
+                notes="mock fallback (live Ixigo scrape empty)",
+            )
+        print(f"Inserted {inserted} mock fallback fare records into {db.DB_PATH}.")
 
 
 def run_pipeline() -> None:
