@@ -122,6 +122,19 @@ streamlit run dashboard/app.py         # opens http://localhost:8501
 The sidebar has a **"Scrape & update data now"** button that re-collects live
 fares and reloads the dashboard without leaving it.
 
+### 🕵️ Browser fingerprint hygiene
+Every live scrape presents as a **first-time ordinary visitor**:
+- a brand-new ephemeral Chrome profile (deleted afterwards) — no cookie /
+  fingerprint carry-over between runs,
+- a **rotating user-agent** from a small pool instead of one static string,
+- automation flags disabled (`navigator.webdriver` masked via CDP,
+  `enable-automation`/`AutomationControlled` stripped),
+- human-ish timing jitter on render/scroll waits.
+
+This reduces the odds the OTA recognises the scrapes as a single recurring
+automated visitor. It is *not* full anti-bot evasion — a production index
+should use an official API/licensed feed (see the legal note below).
+
 ---
 
 ## 📊 Output

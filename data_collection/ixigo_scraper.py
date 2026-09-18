@@ -37,6 +37,9 @@ import re
 import os
 import time
 import uuid
+import random
+import shutil
+import tempfile
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -87,6 +90,25 @@ SCROLL_ROUNDS = 4           # lazy-load deeper results
 SCROLL_WAIT = 1.2
 MAX_FLIGHTS_PER_ROUTE = 25  # cap rows scraped per route+date
 
+# Pool of realistic user-agent strings (mixed OS / Chrome builds). Rotating
+# avoids pivoting on a single static UA version, and lets every scrape
+# session present as an ordinary browser rather than a known repeat visitor.
+USER_AGENTS = [
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+]
+
+
+def _jitter(base: float, spread: float = 0.3) -> float:
+    """Human-ish variance around a base delay ([-spread, +spread])."""
+    return max(0.1, base + random.uniform(-base * spread, base * spread))
+
 
 def _parse_price(raw: str) -> float | None:
     """Extract a numeric INR price from strings like '₹6,442' or 'Rs. 4523'."""
@@ -116,6 +138,9 @@ class IxigoCollector(BaseFareCollector):
         fares = collector.fetch("DEL", "BOM", "2026-09-16")
 
     A fresh headless/headed Chrome driver is created per fetch().
+    Every fetch() uses a brand-new ephemeral profile, random user-agent,
+    and hidden automation flags, so each scrape looks like a first-time
+    ordinary visitor (no cookies / fingerprint carry-over between runs).
     """
 
     source_name = "Ixigo"
@@ -127,20 +152,24 @@ class IxigoCollector(BaseFareCollector):
         self, origin: str, destination: str, travel_date: str
     ) -> List[Dict[str, Any]]:
         """Scrape Ixigo for one route + travel date; return fare dicts."""
-        driver = self._make_driver()
+        driver, profile_dir = self._make_driver()
         try:
+            # Small randomized gap so runs don't start on a metronome.
+            time.sleep(random.uniform(0.4, 1.6))
             return self._scrape_route(driver, origin, destination, travel_date)
         finally:
             try:
                 driver.quit()
             except Exception:
                 pass
+            if profile_dir:
+                shutil.rmtree(profile_dir, ignore_errors=True)
 
     # ------------------------------------------------------------------
     # Driver setup
     # ------------------------------------------------------------------
     @staticmethod
-    def _make_driver() -> webdriver.Chrome:
+    def _make_driver():
         options = webdriver.ChromeOptions()
         if HEADLESS:
             options.add_argument("--headless=new")
@@ -148,10 +177,18 @@ class IxigoCollector(BaseFareCollector):
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1920,1080")
+        # Fresh ephemeral profile per run: no cookies/history carry-over,
+        # so the site cannot recognise a returning session.
+        profile_dir = tempfile.mkdtemp(prefix="ixigo_profile_")
+        options.add_argument(f"--user-data-dir={profile_dir}")
+        # Rotate the user-agent so we don't pivot on one static string.
         options.add_argument(
-            "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0 Safari/537.36"
+            f"user-agent={random.choice(USER_AGENTS)}"
         )
+        # Hide the automation signals Selenium normally exposes.
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
+        options.add_argument("--disable-blink-features=AutomationControlled")
         try:
             from webdriver_manager.chrome import ChromeDriverManager
             service = Service(ChromeDriverManager().install())
@@ -160,7 +197,24 @@ class IxigoCollector(BaseFareCollector):
             service = Service()
         driver = webdriver.Chrome(service=service, options=options)
         driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
-        return driver
+        IxigoCollector._mask_automation_flags(driver)
+        return driver, profile_dir
+
+    @staticmethod
+    def _mask_automation_flags(driver) -> None:
+        """Override navigator.webdriver and friends via CDP before any page loads."""
+        try:
+            driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument",
+                {
+                    "source": (
+                        "Object.defineProperty(navigator, 'webdriver', "
+                        "{get: () => undefined});"
+                    )
+                },
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Scraping
@@ -202,7 +256,7 @@ class IxigoCollector(BaseFareCollector):
             print(f"  [IxigoCollector] Driver error on {travel_date}: {exc}")
             return []
 
-        time.sleep(EXTRA_RENDER_WAIT)
+        time.sleep(_jitter(EXTRA_RENDER_WAIT))
 
         # Lazy load more results by scrolling, collecting unique cards.
         # Note: Selenium returns a fresh proxy per query, so dedupe on the
@@ -232,7 +286,7 @@ class IxigoCollector(BaseFareCollector):
                     return flights
             try:
                 driver.execute_script("window.scrollBy(0, 1500);")
-                time.sleep(SCROLL_WAIT)
+                time.sleep(_jitter(SCROLL_WAIT, spread=0.5))
             except WebDriverException:
                 break
 
