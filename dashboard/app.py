@@ -247,7 +247,7 @@ with rc1:
             ["Route", "Weight", "Baseline Avg (Rs.)", "Current Avg (Rs.)",
              "Index", "Contribution (pts)"]
         ],
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
@@ -260,7 +260,7 @@ with rc2:
         labels={"route": "Route", "value": "Avg Fare (Rs.)", "variable": "Period"},
         title="Baseline vs Current Like-for-like Fare by Route",
     )
-    st.plotly_chart(fig_route, use_container_width=True)
+    st.plotly_chart(fig_route, width='stretch')
 
 if "index_pts" in route_df.columns and not route_df.empty:
     st.caption(
@@ -276,7 +276,7 @@ if "index_pts" in route_df.columns and not route_df.empty:
         labels={"route": "Route", "index_pts": "Index points contributed"},
         title="Route-weighted contribution to the aggregate index",
     )
-    st.plotly_chart(fig_contrib, use_container_width=True)
+    st.plotly_chart(fig_contrib, width='stretch')
 
 
 # ---------------------------------------------------------------
@@ -334,7 +334,7 @@ if not flagged_df.empty:
         f"**{flagged_count} quotes flagged & excluded from the index** — "
         "these remain in the DB audit trail for transparency."
     )
-    st.dataframe(flagged_df, hide_index=True, use_container_width=True)
+    st.dataframe(flagged_df, hide_index=True, width='stretch')
     with st.expander("Per search-day route coverage (missing-scrape audit)"):
         cov = coverage_report(full_df)
         # only show rows with gaps or the latest days
@@ -343,7 +343,7 @@ if not flagged_df.empty:
             st.dataframe(
                 gap.sort_values("coverage_pct"),
                 hide_index=True,
-                use_container_width=True,
+                width='stretch',
             )
         else:
             st.caption("All expected search-day × route quotes were captured.")
@@ -373,7 +373,7 @@ with tc1:
         labels={"search_date": "Search Date", "avg_fare": "Avg Fare (Rs.)"},
         title=f"Average Fare Over Time — {trend_scope}",
     )
-    st.plotly_chart(fig_trend, use_container_width=True)
+    st.plotly_chart(fig_trend, width='stretch')
 
 with tc2:
     fig_index_trend = px.line(
@@ -385,7 +385,7 @@ with tc2:
         title=f"Weighted Laspeyres Airfare Index Over Time (base = {INDEX_BASE_VALUE:g})",
     )
     fig_index_trend.add_hline(y=INDEX_BASE_VALUE, line_dash="dash", line_color="gray")
-    st.plotly_chart(fig_index_trend, use_container_width=True)
+    st.plotly_chart(fig_index_trend, width='stretch')
 
 
 # ---------------------------------------------------------------
@@ -403,7 +403,7 @@ with ac1:
                 "quote_count": "Quotes (current window)",
             }
         ),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
     )
 
@@ -416,7 +416,7 @@ with ac2:
         labels={"airline": "Airline", "current_avg_fare": "Current Avg Fare (Rs.)"},
         title="Current Average Fare by Airline",
     )
-    st.plotly_chart(fig_airline, use_container_width=True)
+    st.plotly_chart(fig_airline, width='stretch')
 
 
 st.markdown("---")
