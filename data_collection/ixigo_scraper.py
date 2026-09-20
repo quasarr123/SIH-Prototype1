@@ -86,9 +86,7 @@ HEADLESS = os.environ.get("IXIGO_HEADLESS", "0") == "1"  # set IXIGO_HEADLESS=1 
 PAGE_LOAD_TIMEOUT = 45
 RESULT_WAIT_TIMEOUT = 25   # how long to wait for the first card
 EXTRA_RENDER_WAIT = 5       # settle time after the first card appears
-SCROLL_ROUNDS = 4           # lazy-load deeper results
-SCROLL_WAIT = 1.2
-MAX_FLIGHTS_PER_ROUTE = 25  # cap rows scraped per route+date
+MAX_FLIGHTS_PER_ROUTE = 3   # only keep the top-3 most popular (first-rendered) flights
 
 # Pool of realistic user-agent strings (mixed OS / Chrome builds). Rotating
 # avoids pivoting on a single static UA version, and lets every scrape
@@ -258,37 +256,30 @@ class IxigoCollector(BaseFareCollector):
 
         time.sleep(_jitter(EXTRA_RENDER_WAIT))
 
-        # Lazy load more results by scrolling, collecting unique cards.
-        # Note: Selenium returns a fresh proxy per query, so dedupe on the
-        # parsed content (airline + dep + arr + price), not element identity.
+        # Ixigo renders results in order of popularity, so the top cards are
+        # exactly the ones we want. Parse only the first render — no scrolling.
         seen: set = set()
         flights: List[Dict[str, Any]] = []
 
-        for _ in range(SCROLL_ROUNDS + 1):
-            for card in self._current_cards(driver):
-                parsed = self._parse_card(
-                    card, origin, destination, travel_date,
-                    scrape_id=scrape_id, source_url=url,
-                )
-                if not parsed or parsed["fare_price"] is None:
-                    continue
-                key = (
-                    parsed["airline"],
-                    parsed["departure_time"],
-                    parsed["arrival_time"],
-                    parsed["fare_price"],
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                flights.append(parsed)
-                if len(flights) >= MAX_FLIGHTS_PER_ROUTE:
-                    return flights
-            try:
-                driver.execute_script("window.scrollBy(0, 1500);")
-                time.sleep(_jitter(SCROLL_WAIT, spread=0.5))
-            except WebDriverException:
-                break
+        for card in self._current_cards(driver):
+            parsed = self._parse_card(
+                card, origin, destination, travel_date,
+                scrape_id=scrape_id, source_url=url,
+            )
+            if not parsed or parsed["fare_price"] is None:
+                continue
+            key = (
+                parsed["airline"],
+                parsed["departure_time"],
+                parsed["arrival_time"],
+                parsed["fare_price"],
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            flights.append(parsed)
+            if len(flights) >= MAX_FLIGHTS_PER_ROUTE:
+                return flights
 
         return flights
 
